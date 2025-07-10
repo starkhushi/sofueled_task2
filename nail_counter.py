@@ -8,8 +8,12 @@ cap = cv2.VideoCapture(video_path)
 fgbg = cv2.createBackgroundSubtractorMOG2()
 
 detected_centroids = []
-silver_nail_count = 0
+falling_nail_centroids = []
+total_nail_count = 0
+falling_nail_count = 0
 frame_count = 0
+
+falling_start_frame = 10  
 
 while True:
     ret, frame = cap.read()
@@ -18,63 +22,68 @@ while True:
 
     frame_count += 1
 
-    # Skip first 1 second (assuming 30 FPS)
-    if frame_count < 30:
-        continue
-
-    # Resize for consistency
     frame = imutils.resize(frame, width=600)
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Background subtraction
+    # Optional: Apply CLAHE to V channel
+    h, s, v = cv2.split(hsv)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    v = clahe.apply(v)
+    hsv = cv2.merge((h, s, v))
+
     fgmask = fgbg.apply(frame)
 
-    # Updated color range for silver (non-rusted) nails
-    lower_silver = np.array([0, 0, 160])
-    upper_silver = np.array([180, 40, 255])
-    silver_mask = cv2.inRange(hsv, lower_silver, upper_silver)
+    # Adjusted color range for silver (tune as needed)
+    lower_silver = np.array([0, 0, 140])
+    upper_silver = np.array([180, 60, 255])
 
-    # Combine motion and color masks
+    silver_mask = cv2.inRange(hsv, lower_silver, upper_silver)
     combined_mask = cv2.bitwise_and(fgmask, silver_mask)
 
-    # Clean mask
     kernel = np.ones((5, 5), np.uint8)
     cleaned_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
     cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_DILATE, kernel)
+    cleaned_mask = cv2.morphologyEx(cleaned_mask, cv2.MORPH_CLOSE, kernel)
 
-    # Find contours
     contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if 50 < area < 800:  # Adjust for nail size
+        if 30 < area < 1200:
             x, y, w, h = cv2.boundingRect(cnt)
             cx, cy = x + w // 2, y + h // 2
 
-            # Check for duplicates
             duplicate = False
             for prev_cx, prev_cy in detected_centroids:
-                if abs(cx - prev_cx) < 20 and abs(cy - prev_cy) < 20:
+                if abs(cx - prev_cx) < 18 and abs(cy - prev_cy) < 18:
                     duplicate = True
                     break
 
             if not duplicate:
                 detected_centroids.append((cx, cy))
-                silver_nail_count += 1
+                total_nail_count += 1
+
+                # Count as falling nail only if detected after 1 second
+                if frame_count >= falling_start_frame:
+                    falling_nail_centroids.append((cx, cy))
+                    falling_nail_count += 1
+
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(frame, f'Nail {silver_nail_count}', (x, y - 10),
+                cv2.putText(frame, f'Nail {total_nail_count}', (x, y - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-    # Display count
-    cv2.putText(frame, f'Silver Nails Counted: {silver_nail_count}', (10, 30),
+    # Display both counts
+    cv2.putText(frame, f'Total Nails: {total_nail_count}', (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    cv2.putText(frame, f'Falling Nails: {falling_nail_count}', (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-    # Show the frame (slowed down by 5x)
     cv2.imshow("Detection", frame)
-    if cv2.waitKey(150) & 0xFF == ord('q'):  # Slower display
+    if cv2.waitKey(300) & 0xFF == ord('q'):
         break
 
 cap.release()
 cv2.destroyAllWindows()
 
-print(f"✅ Total silver (non-rusted) nails counted: {silver_nail_count}")
+print(f"✅ Total silver (non-rusted) nails counted: {total_nail_count}")
+print(f"✅ Falling nails (non-rusted) counted after 0.5 second: {falling_nail_count}")
